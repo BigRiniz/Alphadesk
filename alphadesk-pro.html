@@ -183,7 +183,7 @@ input[type=text],input[type=number]{background:var(--bg3);border:0.5px solid var
 input[type=text]:focus,input[type=number]:focus{border-color:var(--blue);}
 .sync-code-box{background:var(--bg3);border:0.5px solid var(--border);border-radius:10px;padding:10px 12px;font-size:11px;font-family:var(--fm);color:var(--teal);word-break:break-all;margin-top:8px;}
 /* MODAL */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:100;display:none;align-items:flex-end;}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:300;display:none;align-items:flex-end;}
 .modal-overlay.show{display:flex;}
 .modal-sheet{background:var(--bg2);border-radius:20px 20px 0 0;width:100%;max-height:88vh;display:flex;flex-direction:column;padding-bottom:var(--safe-bot);}
 .modal-handle{width:36px;height:4px;background:var(--text3);border-radius:2px;margin:10px auto 0;}
@@ -1177,6 +1177,9 @@ input[type=text]:focus,input[type=number]:focus{border-color:var(--blue);}
 
 
 
+
+
+
 // ── STATE ──
 var port=[
   {tk:'NVDA',nm:'NVIDIA Corp.',sh:10,ac:890,sec:'AI-Chips',cp:null,ch:null},
@@ -1222,6 +1225,12 @@ function autoSave(){
     localStorage.setItem('ad_journal',JSON.stringify(journal));
     localStorage.setItem('ad_settings',JSON.stringify(settings));
     localStorage.setItem('ad_saved',new Date().toISOString());
+    // Also save API keys separately for extra resilience
+    if(settings.fhKey)localStorage.setItem('ad_fhkey',settings.fhKey);
+    if(settings.tdKey)localStorage.setItem('ad_tdkey',settings.tdKey);
+    if(settings.jbKey)localStorage.setItem('ad_jbkey',settings.jbKey);
+    if(settings.jbBin)localStorage.setItem('ad_jbbin',settings.jbBin);
+    if(settings.syncType)localStorage.setItem('ad_synctype',settings.syncType);
   }catch(e){}
 }
 function autoLoad(){
@@ -1230,6 +1239,12 @@ function autoLoad(){
     var w=localStorage.getItem('ad_wlist');if(w)wlist=JSON.parse(w);
     var j=localStorage.getItem('ad_journal');if(j)journal=JSON.parse(j);
     var s=localStorage.getItem('ad_settings');if(s)Object.assign(settings,JSON.parse(s));
+    // Also load individual key slots as fallback
+    var fk=localStorage.getItem('ad_fhkey');if(fk&&!settings.fhKey)settings.fhKey=fk;
+    var tk=localStorage.getItem('ad_tdkey');if(tk&&!settings.tdKey)settings.tdKey=tk;
+    var jk=localStorage.getItem('ad_jbkey');if(jk&&!settings.jbKey)settings.jbKey=jk;
+    var jb=localStorage.getItem('ad_jbbin');if(jb&&!settings.jbBin)settings.jbBin=jb;
+    var st=localStorage.getItem('ad_synctype');if(st&&!settings.syncType)settings.syncType=st;
   }catch(e){}
 }
 
@@ -1243,7 +1258,18 @@ function setSyncStatus(st){
   else if(st==='error'){dot.classList.add('sd-err');lbl.textContent='Sync-Fehler';}
   else{lbl.textContent=settings.jbKey?'Cloud bereit':'Lokal';}
 }
-function cloudData(){return{portfolio:port,watchlist:wlist,journal:journal,settings:{rfRate:settings.rfRate},updatedAt:new Date().toISOString()};}
+function cloudData(){
+  return{
+    portfolio:port,watchlist:wlist,journal:journal,
+    qualData:qualData,buyList:buyList,
+    catalysts:catalysts,scenarios:scenarios,mgmtScores:mgmtScores,
+    // API keys included so they survive browser/device changes
+    // (sync keys themselves are NOT included – they stay local)
+    apiKeys:{fhKey:settings.fhKey,tdKey:settings.tdKey,
+             rapidKey:settings.rapidKey,rfRate:settings.rfRate},
+    updatedAt:new Date().toISOString()
+  };
+}
 async function cloudPush(){
   if(!settings.jbKey)return;
   // Route to GitHub Gist if configured
@@ -1284,6 +1310,17 @@ async function cloudPush(){
     setSyncStatus('synced');
   }catch(e){setSyncStatus('error');console.error('cloudPush:',e);}
 }
+
+function restoreApiKeysFromCloud(rec){
+  if(!rec||!rec.apiKeys)return;
+  var ak=rec.apiKeys;
+  function setField(id,val){var el=document.getElementById(id);if(el&&val)el.value=val;}
+  if(ak.fhKey&&!settings.fhKey){settings.fhKey=ak.fhKey;setField('fh-key',ak.fhKey);}
+  if(ak.tdKey&&!settings.tdKey){settings.tdKey=ak.tdKey;setField('td-key',ak.tdKey);}
+  if(ak.rapidKey&&!settings.rapidKey)settings.rapidKey=ak.rapidKey;
+  if(ak.rfRate)settings.rfRate=ak.rfRate;
+}
+
 async function cloudPull(){
   if(!settings.jbKey||!settings.jbBin)return;
   // Route to GitHub Gist if configured
@@ -1300,6 +1337,7 @@ async function cloudPull(){
         if(d.catalysts)catalysts=d.catalysts;
         if(d.scenarios)scenarios=d.scenarios;
         if(d.mgmtScores)mgmtScores=d.mgmtScores;
+        restoreApiKeysFromCloud(d);
         settings.lastSync=new Date().toISOString();autoSave();refreshAll();setSyncStatus('synced');
         toast('Gist-Daten geladen','var(--green)');
       }
@@ -1319,6 +1357,10 @@ async function cloudPull(){
       if(rec.settings)Object.assign(settings,{rfRate:rec.settings.rfRate||4.5});
       if(rec.qualData)qualData=rec.qualData;
       if(rec.buyList)buyList=rec.buyList;
+      if(rec.catalysts)catalysts=rec.catalysts;
+      if(rec.scenarios)scenarios=rec.scenarios;
+      if(rec.mgmtScores)mgmtScores=rec.mgmtScores;
+      restoreApiKeysFromCloud(rec);
       settings.lastSync=new Date().toISOString();
       autoSave();
       refreshAll();
@@ -5039,17 +5081,24 @@ autoLoad=function(){
 // ── INIT ──
 try{autoLoad();}catch(e){console.error('autoLoad error:',e);}
 try{autoPopulateAllSV();}catch(e){console.error('autoPopulateSV error:',e);}
-if(settings.fhKey)document.getElementById('fh-key').value=settings.fhKey;
-  if(settings.tdKey){var tdEl=document.getElementById('td-key');if(tdEl)tdEl.value=settings.tdKey;}
-if(settings.jbKey)document.getElementById('jb-key').value=settings.jbKey;
-if(settings.rfRate)document.getElementById('rf-rate').value=settings.rfRate;
-var rapidEl=document.getElementById('rapid-key');if(rapidEl&&settings.rapidKey)rapidEl.value=settings.rapidKey;
+// Populate settings UI with null-safety
+(function(){
+  function setField(id,val){var el=document.getElementById(id);if(el&&val)el.value=val;}
+  setField('fh-key',settings.fhKey);
+  setField('td-key',settings.tdKey);
+  setField('jb-key',settings.jbKey);
+  setField('rf-rate',settings.rfRate);
+  setField('rapid-key',settings.rapidKey);
+})();
 try{renderPositions();}catch(e){console.error(e);}
 try{renderEditPositions();renderEditWL();renderJournal();updBar();renderSectors();}catch(e){console.error(e);}
 setSyncStatus(settings.jbKey&&settings.jbBin?'idle':'idle');
 renderSyncCode();
 // Auto-pull from cloud on start
 if(settings.jbKey&&settings.jbBin){setTimeout(function(){cloudPull();},800);}
+
+
+
 
 
 
